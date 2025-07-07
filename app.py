@@ -34,7 +34,7 @@ db_config = {
 
 try:
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    model = "gpt-3.5-turbo"  # or "gpt-4" if you prefer
+    model = "gpt-4o"  # or "gpt-4" if you prefer
     print("OpenAI API configured successfully.")
 except Exception as e:
     client = None
