@@ -42,13 +42,32 @@ db_config = {
     'charset': 'utf8mb4'
 }
 
+# Enhanced OpenAI configuration with better error handling
 try:
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY environment variable not set")
+    
+    if not api_key.startswith('sk-'):
+        raise ValueError("Invalid OpenAI API key format")
+    
+    client = OpenAI(api_key=api_key)
     model = "gpt-4o"
-    print("✅ OpenAI API configured successfully.")
+    
+    # Test the connection
+    test_response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": "test"}],
+        max_tokens=5
+    )
+    print("✅ OpenAI API configured and tested successfully.")
+    
+except ValueError as ve:
+    client = None
+    print(f"❌ OpenAI Configuration Error: {ve}")
 except Exception as e:
     client = None
-    print(f"❌ Error configuring OpenAI: {e}")
+    print(f"❌ OpenAI API Error: {e}")
 
 website_context = ""
 
