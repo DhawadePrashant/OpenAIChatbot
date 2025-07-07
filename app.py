@@ -255,13 +255,24 @@ def wp_chat():
         
         response = client.chat.completions.create(
             model=model,
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role": "user", "content": prompt}],
             max_tokens=150,
             temperature=0.7
         )
         bot_response = response.choices[0].message.content
+        
+        # ADD: Save to database for dashboard functionality
+        conn = get_db_connection()
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO chat_history (user_id, user_message, bot_response, context_url)
+                VALUES (%s, %s, %s, %s)
+            """, (1, user_message, bot_response, website_context[:2048] if website_context else None))
+            conn.commit()
+            cursor.close()
+            conn.close()
+        
         return jsonify({"response": bot_response})
     except Exception as e:
         print(f"Error communicating with AI model: {str(e)}")
