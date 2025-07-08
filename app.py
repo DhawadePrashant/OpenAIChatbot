@@ -42,16 +42,19 @@ db_config = {
     'charset': 'utf8mb4'
 }
 
-# Replace the OpenAI configuration section with:
+# Update the OpenAI configuration section
 try:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY environment variable not set")
     
-    # Fixed: Remove any proxies parameter
     client = OpenAI(api_key=api_key)
-    model = "gpt-4o"
+    model = os.getenv("OPENAI_MODEL", "gpt-4o")
+    max_tokens = int(os.getenv("OPENAI_MAX_TOKENS", "500"))
+    temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.7"))
+    
     print("✅ OpenAI API configured successfully.")
+    print(f"✅ Using model: {model}")
 except Exception as e:
     client = None
     print(f"❌ Error configuring OpenAI: {e}")
@@ -334,6 +337,7 @@ def wp_process_url():
         website_context = ""
         return jsonify({"error": f"Error processing URL: {str(e)}"}), 500
 
+# Update the chat endpoint to use proper OpenAI parameters
 @app.route('/wp-api/chat', methods=['POST'])
 def wp_chat():
     global website_context
@@ -348,34 +352,53 @@ def wp_chat():
         if not user_message:
             return jsonify({"error": "Message cannot be empty"}), 400
         
-        if len(user_message) > 1000:
-            return jsonify({"error": "Message too long. Please limit to 1000 characters."}), 400
+        if len(user_message) > 2000:
+            return jsonify({"error": "Message too long. Please limit to 2000 characters."}), 400
         
         if not client:
             return jsonify({"error": "AI model not configured"}), 500
         
-        # Create prompt based on context
-        if website_context:
-            prompt = (f"Based on the following website content, provide a concise and helpful answer. "
-                      f"Keep your entire response between 400 and 500 characters.\n\n"
-                      f"--- WEBSITE CONTENT ---\n{website_context}\n--- END OF CONTENT ---\n\n"
-                      f"User's Question: {user_message}")
-        else:
-            prompt = (f"Please provide a concise and helpful answer to the following question. "
-                      f"Keep your entire response between 400 and 500 characters.\n\n"
-                      f"Question: {user_message}")
+        # Enhanced prompt engineering for better responses
+        system_prompt = """You are a helpful AI assistant. Provide accurate, concise, and helpful responses. 
+        If you're given website content as context, use it to provide more relevant answers.
+        Keep responses conversational and under 500 characters unless more detail is specifically requested."""
         
-        # Call OpenAI API
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add context if available
+        if website_context:
+            context_message = f"Website Context: {website_context[:4000]}"
+            messages.append({"role": "system", "content": context_message})
+        
+        messages.append({"role": "user", "content": user_message})
+        
+        # Call OpenAI API with proper error handling
+        start_time = time.time()
+        
         response = client.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=150,
-            temperature=0.7
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            presence_penalty=0.1,
+            frequency_penalty=0.1
         )
         
-        bot_response = response.choices[0].message.content
+        response_time = (time.time() - start_time) * 1000
         
-        # Save to database with proper user handling
+        bot_response = response.choices[0].message.content
+        tokens_used = response.usage.total_tokens
+        
+        # Enhanced response data
+        response_data = {
+            "response": bot_response,
+            "tokens_used": tokens_used,
+            "response_time": round(response_time, 2),
+            "model": model,
+            "session_id": data.get('session_id', generate_session_id())
+        }
+        
+        # Save to database with enhanced data
         user_id = get_or_create_anonymous_user()
         conn = get_db_connection()
         
@@ -383,20 +406,38 @@ def wp_chat():
             try:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO chat_history (user_id, user_message, bot_response, context_url)
-                    VALUES (%s, %s, %s, %s)
-                """, (user_id, user_message, bot_response, website_context[:2048] if website_context else None))
+                    INSERT INTO chat_history (
+                        user_id, user_message, bot_response, context_url, 
+                        response_time, tokens_used, model_used, session_id
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    user_id, user_message, bot_response, 
+                    website_context[:2048] if website_context else None,
+                    response_time, tokens_used, model, response_data["session_id"]
+                ))
                 conn.commit()
                 cursor.close()
                 conn.close()
             except Exception as e:
                 print(f"Error saving chat history: {e}")
         
-        return jsonify({"response": bot_response})
+        return jsonify(response_data)
         
     except Exception as e:
         print(f"Error in chat endpoint: {str(e)}")
         return jsonify({"error": "AI service error. Please try again."}), 500
+
+# Add a new endpoint for model information
+@app.route('/wp-api/model-info', methods=['GET'])
+def get_model_info():
+    return jsonify({
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "provider": "OpenAI",
+        "status": "active" if client else "inactive"
+    })
 
 @app.route('/wp-api/test', methods=['GET'])
 def wp_test():
